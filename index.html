@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MemeForge</title>
+<script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.98.0/lib/index.iife.min.js"></script>
+<style>
+:root{--bg:#0c1622;--sf:#13233a;--ln:#243a58;--tx:#e8eff8;--mu:#93a8c2;--ac:#3fd6c4;--wn:#f0b94d;--bd:#ff7070;--ok:#5fdc9a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,sans-serif}
+main{max-width:640px;margin:0 auto;padding:16px 14px 70px}h1,h2{font-family:Georgia,serif;margin:0 0 8px}h2{font-size:19px}
+.card{background:var(--sf);border:1px solid var(--ln);border-radius:12px;padding:15px;margin-bottom:14px}
+label{display:block;color:var(--mu);font-size:13px;margin:10px 0 4px}
+input,select,textarea{width:100%;background:var(--bg);color:var(--tx);border:1px solid var(--ln);border-radius:8px;padding:9px;font:inherit}
+.btn{background:var(--ac);color:#062520;border:0;border-radius:8px;padding:11px 16px;font:inherit;font-weight:600;cursor:pointer}
+.btn.g{background:var(--ln);color:var(--tx)}.btn:disabled{opacity:.4}.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.mu{color:var(--mu);font-size:13px}.ok{color:var(--ok)}.bd{color:var(--bd)}.wn{color:var(--wn)}.a{display:grid;grid-template-columns:78px 1fr;gap:8px;margin-top:8px}
+table{width:100%;border-collapse:collapse}td{padding:6px 0;border-bottom:1px solid var(--ln);vertical-align:top;word-break:break-all}td:first-child{color:var(--mu);width:38%;padding-right:8px}
+a{color:var(--ac)}code{word-break:break-all}
+</style></head><body><main id="app"></main>
+<script>
+const {Connection,PublicKey,Keypair,SystemProgram,Transaction,TransactionInstruction}=solanaWeb3;
+const TOKEN=new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),ATAP=new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'),
+META=new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'),RENT=new PublicKey('SysvarRent111111111111111111111111111111111');
+const RPC={devnet:'https://api.devnet.solana.com',mainnet:'https://api.mainnet-beta.solana.com'};
+const CATS=[['community','Community'],['treasury','Treasury'],['creator','Creator'],['liquidity','Liquidity'],['other','Other']];
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $=id=>document.getElementById(id),app=$('app');
+let net='devnet',pk=null,prov=null,cfg=null,plan=null,busy=false;
+const cx=()=>new Connection(RPC[net],'confirmed');
+const cat=(...a)=>{const o=new Uint8Array(a.reduce((n,x)=>n+x.length,0));let i=0;a.forEach(x=>{o.set(x,i);i+=x.length});return o};
+const u32=n=>{const b=new Uint8Array(4);new DataView(b.buffer).setUint32(0,n,true);return b};
+const u64=n=>{const b=new Uint8Array(8);new DataView(b.buffer).setBigUint64(0,BigInt(n),true);return b};
+const str=s=>{const e=new TextEncoder().encode(s);return cat(u32(e.length),e)};
+const ata=(o,m)=>PublicKey.findProgramAddressSync([o.toBytes(),TOKEN.toBytes(),m.toBytes()],ATAP)[0];
+const K=(pubkey,isSigner,isWritable)=>({pubkey,isSigner,isWritable});
+const ix=(programId,keys,data)=>new TransactionInstruction({programId,keys,data:Buffer.from(data)});
+const ex=(m,t)=>`https://explorer.solana.com/${t}/${m}${net==='devnet'?'?cluster=devnet':''}`;
+
+function shell(){app.innerHTML=`<h1>MemeForge</h1><p class="mu">Create a meme token from your own wallet. Every transaction needs your approval in Phantom. This page never sees your keys.</p>
+<div class="card"><div class="row" style="margin:0"><select id="net" style="width:auto"><option value="devnet">Devnet (free test)</option><option value="mainnet">Mainnet (real SOL)</option></select>
+<button class="btn" id="conn">Connect Phantom</button><button class="btn g" id="air">Free devnet SOL</button></div><div id="acct" class="mu" style="margin-top:8px">Not connected</div></div>
+<div class="card"><h2>Token</h2><label>Name</label><input id="name" maxlength="32"><label>Ticker</label><input id="tick" maxlength="10" placeholder="FGOLD">
+<label>Description (shown on the public page)</label><textarea id="desc" rows="3"></textarea>
+<div class="a"><div><label>Decimals</label><input id="dec" type="number" value="9" min="0" max="9"></div><div><label>Total supply (whole tokens)</label><input id="sup" type="number" value="1000000000"></div></div>
+<label>Mint authority</label><select id="ma"><option value="revoked">Revoked after minting (recommended)</option><option value="active">Keep active</option></select>
+<label>Freeze authority</label><select id="fa"><option value="revoked">None (recommended)</option><option value="active">Keep active</option></select>
+<label>Token name/symbol metadata</label><select id="im"><option value="lock">Locked permanently (recommended)</option><option value="edit">Editable later</option></select></div>
+<div class="card"><h2>Allocation</h2><p class="mu">Must total 100%. Leave the address blank to use your connected wallet. Every address is shown publicly.</p>
+${CATS.map(([k,l],i)=>`<div class="a"><input id="p_${k}" type="number" step="0.1" min="0" value="${[80,10,5,5,0][i]}" aria-label="${l} percent"><input id="w_${k}" placeholder="${l} wallet address"></div>`).join('')}
+<div class="row"><button class="btn" id="rev">Review</button></div></div><div id="out"></div>`;
+ $('net').value=net;$('net').onchange=e=>{net=e.target.value;cfg=null;$('out').innerHTML='';acct()};$('conn').onclick=connect;$('air').onclick=airdrop;$('rev').onclick=review}
+function acct(){$('acct').textContent=pk?`${pk.toBase58()} on ${net}`:'Not connected'}
+async function connect(){prov=window.phantom?.solana||window.solana;
+ if(!prov||!prov.isPhantom){alert('Open this page inside the Phantom app browser (or a desktop browser with Phantom).');return}
+ try{pk=(await prov.connect()).publicKey;acct()}catch(e){alert('Connection cancelled.')}}
+async function airdrop(){if(net!=='devnet')return alert('Airdrops exist only on devnet.');if(!pk)return alert('Connect Phantom first.');
+ try{await cx().requestAirdrop(pk,1e9);alert('1 devnet SOL requested. It can take a few seconds.')}catch(e){alert('Airdrop failed (limits are common). Try faucet.solana.com with your address.')}}
+function read(){const c={name:$('name').value.trim(),ticker:$('tick').value.trim().toUpperCase(),desc:$('desc').value.trim(),dec:+$('dec').value,
+ sup:$('sup').value.trim(),ma:$('ma').value,fa:$('fa').value,im:$('im').value,al:[]};const er=[];
+ if(!c.name)er.push('Name is required.');if(!/^[A-Z0-9]{2,10}$/.test(c.ticker))er.push('Ticker must be 2–10 capital letters or digits.');
+ if(!(Number.isInteger(c.dec)&&c.dec>=0&&c.dec<=9))er.push('Decimals must be 0–9.');if(!/^[1-9]\d*$/.test(c.sup))er.push('Supply must be a whole number above 0.');
+ if(!pk)er.push('Connect Phantom first.');let tot=0;
+ for(const[k,l]of CATS){const p=+$('p_'+k).value||0;tot+=p;if(p<=0)continue;let w=$('w_'+k).value.trim()||(pk&&pk.toBase58());
+  try{new PublicKey(w)}catch(e){er.push(`${l}: invalid wallet address.`)}c.al.push({k,l,p,w})}
+ if(Math.abs(tot-100)>1e-9)er.push(`Allocations total ${+tot.toFixed(4)}%. They must total exactly 100%.`);
+ if(!er.length){c.raw=BigInt(c.sup)*10n**BigInt(c.dec);if(c.raw>=2n**64n)er.push('Supply × decimals is too large. Lower one of them.');
+  else{let left=c.raw;c.al.forEach((a,i)=>{a.amt=i===c.al.length-1?left:c.raw*BigInt(Math.round(a.p*100))/10000n;left-=a.amt})}}
+ return{c,er}}
+async function review(){const{c,er}=read();const o=$('out');
+ if(er.length){o.innerHTML=`<div class="card">${er.map(e=>`<div class="bd">${esc(e)}</div>`).join('')}</div>`;return}
+ cfg=c;o.innerHTML='<div class="card mu">Fetching live cost estimate…</div>';let fee='unavailable';
+ try{const k=cx(),owners=new Set(c.al.map(a=>a.w)).size,l=await Promise.all([k.getMinimumBalanceForRentExemption(82),k.getMinimumBalanceForRentExemption(679),k.getMinimumBalanceForRentExemption(165)]);
+  fee=((l[0]+l[1]+l[2]*owners+5000*5)/1e9).toFixed(4)+' SOL (estimate, includes refundable-style rent)'}catch(e){fee='Blockchain data temporarily unavailable.'}
+ o.innerHTML=`<div class="card"><h2>Final review</h2><table><tr><td>Token</td><td>${esc(c.name)} ($${esc(c.ticker)})</td></tr><tr><td>Network</td><td>Solana ${net}</td></tr>
+ <tr><td>Supply</td><td>${Number(c.sup).toLocaleString()} · ${c.dec} decimals</td></tr>${c.al.map(a=>`<tr><td>${a.l} ${a.p}%</td><td>${esc(a.w)}</td></tr>`).join('')}
+ <tr><td>Creator wallet</td><td>${pk.toBase58()}</td></tr><tr><td>Mint authority</td><td>${c.ma==='revoked'?'Revoked after minting':'Active (creator)'}</td></tr>
+ <tr><td>Freeze authority</td><td>${c.fa==='revoked'?'None':'Active (creator)'}</td></tr><tr><td>Metadata</td><td>${c.im==='lock'?'Locked':'Editable'}</td></tr><tr><td>Estimated cost</td><td>${fee}</td></tr></table>
+ ${net==='mainnet'?'<label class="wn">Mainnet spends real SOL. Type MAINNET to enable.</label><input id="mn">':''}
+ <p class="mu">Phantom will ask you to approve two transactions. Nothing is sent until you approve them.</p><div class="row"><button class="btn" id="go">Deploy token</button></div></div>`;
+ $('go').onclick=()=>{if(net==='mainnet'&&$('mn').value!=='MAINNET')return alert('Type MAINNET first.');deploy()}}
+async function send(k,tx,extra){const{blockhash,lastValidBlockHeight}=await k.getLatestBlockhash();tx.feePayer=pk;tx.recentBlockhash=blockhash;
+ if(extra)tx.partialSign(extra);const r=await prov.signAndSendTransaction(tx);await k.confirmTransaction({signature:r.signature,blockhash,lastValidBlockHeight},'confirmed');return r.signature}
+async function deploy(){if(busy)return;busy=true;const c=cfg,o=$('out'),k=cx(),mk=Keypair.generate(),m=mk.publicKey,log=t=>o.insertAdjacentHTML('beforeend',`<div class="card mu">${t}</div>`);
+ $('go').disabled=true;let s1;
+ try{const[rm]=await Promise.all([k.getMinimumBalanceForRentExemption(82)]);
+  const [md]=PublicKey.findProgramAddressSync([new TextEncoder().encode('metadata'),META.toBytes(),m.toBytes()],META);
+  const t1=new Transaction().add(SystemProgram.createAccount({fromPubkey:pk,newAccountPubkey:m,lamports:rm,space:82,programId:TOKEN}),
+   ix(TOKEN,[K(m,false,true)],cat(Uint8Array.of(20,c.dec),pk.toBytes(),c.fa==='active'?cat(Uint8Array.of(1),pk.toBytes()):Uint8Array.of(0))),
+   ix(META,[K(md,false,true),K(m,false,false),K(pk,true,false),K(pk,true,true),K(pk,true,false),K(SystemProgram.programId,false,false),K(RENT,false,false)],
+    cat(Uint8Array.of(33),str(c.name),str(c.ticker),str(''),Uint8Array.of(0,0),Uint8Array.of(0,0,0),Uint8Array.of(c.im==='lock'?0:1),Uint8Array.of(0))));
+  s1=await send(k,t1,mk);log(`Step 1 confirmed: token created. <a href="${ex(s1,'tx')}" target="_blank">View transaction</a>`);
+ }catch(e){o.insertAdjacentHTML('beforeend',`<div class="card bd">Deployment failed before the token existed: ${esc(e.message||e)}<br>No token was created.</div>`);busy=false;$('go').disabled=false;return}
+ try{const by={};c.al.forEach(a=>by[a.w]=(by[a.w]||0n)+a.amt);const t2=new Transaction();
+  for(const[w,amt]of Object.entries(by)){const ow=new PublicKey(w),a=ata(ow,m);
+   t2.add(ix(ATAP,[K(pk,true,true),K(a,false,true),K(ow,false,false),K(m,false,false),K(SystemProgram.programId,false,false),K(TOKEN,false,false)],Uint8Array.of(1)),
+    ix(TOKEN,[K(m,false,true),K(a,false,true),K(pk,true,false)],cat(Uint8Array.of(7),u64(amt))))}
+  if(c.ma==='revoked')t2.add(ix(TOKEN,[K(m,false,true),K(pk,true,false)],Uint8Array.of(6,0,0)));
+  const s2=await send(k,t2);log(`Step 2 confirmed: supply minted. <a href="${ex(s2,'tx')}" target="_blank">View transaction</a>`);
+  const rec={mint:m.toBase58(),net,name:c.name,ticker:c.ticker,desc:c.desc,dec:c.dec,sup:c.sup,ma:c.ma,fa:c.fa,creator:pk.toBase58(),t:Date.now(),al:c.al.map(a=>({l:a.l,p:a.p,w:a.w,amt:a.amt.toString()}))};
+  const link=location.origin+location.pathname+'#t='+btoa(unescape(encodeURIComponent(JSON.stringify(rec))));
+  try{const h=JSON.parse(localStorage.getItem('mf_tokens')||'[]');h.push(rec);localStorage.setItem('mf_tokens',JSON.stringify(h))}catch(e){}
+  o.insertAdjacentHTML('beforeend',`<div class="card"><h2>Verifying on-chain…</h2><div id="ver"></div><p>Public page: <a href="${link}">${esc(link.slice(0,60))}…</a></p><p class="mu">Copy this link and keep it. It contains the full config.</p></div>`);
+  await verify(rec,$('ver'))
+ }catch(e){o.insertAdjacentHTML('beforeend',`<div class="card bd">Step 2 failed: ${esc(e.message||e)}<br>The token exists but its supply was not minted. Mint address: <code>${m.toBase58()}</code>. Do not mark it verified.</div>`)}
+ busy=false}
+async function verify(r,el){const old=net;net=r.net;const k=cx();
+ try{const m=new PublicKey(r.mint),v=(await k.getParsedAccountInfo(m)).value;if(!v||!v.data.parsed)throw 0;const i=v.data.parsed.info,raw=BigInt(r.sup)*10n**BigInt(r.dec),ch=[];
+  const add=(n,e,a)=>ch.push([n,String(e)===String(a),e,a]);add('Supply',raw,i.supply);add('Decimals',r.dec,i.decimals);
+  add('Mint authority',r.ma==='revoked'?'revoked':r.creator,i.mintAuthority||'revoked');add('Freeze authority',r.fa==='revoked'?'revoked':r.creator,i.freezeAuthority||'revoked');
+  const by={};r.al.forEach(a=>by[a.w]=(by[a.w]||0n)+BigInt(a.amt));
+  for(const[w,amt]of Object.entries(by)){let b='0';try{b=(await k.getTokenAccountBalance(ata(new PublicKey(w),m))).value.amount}catch(e){}add('Balance '+w.slice(0,4)+'…'+w.slice(-4),amt,b)}
+  const ok=ch.every(x=>x[1]);el.innerHTML=`<b class="${ok?'ok':'bd'}">${ok?'Verified: everything matches the config.':'VERIFICATION FAILED'}</b>`+ch.map(x=>`<div class="${x[1]?'ok':'bd'}">${x[1]?'✓':'✗'} ${esc(x[0])}${x[1]?'':` (expected ${esc(x[2])}, found ${esc(x[3])})`}</div>`).join('')
+ }catch(e){el.innerHTML='<span class="wn">Blockchain data temporarily unavailable.</span>'}net=old}
+function pub(r){app.innerHTML=`<h1>${esc(r.name)} <span class="mu">$${esc(r.ticker)}</span></h1><p>${esc(r.desc)}</p><div class="card"><table>
+ <tr><td>Contract</td><td><a href="${(net=r.net,ex(r.mint,'address'))}" target="_blank">${esc(r.mint)}</a></td></tr><tr><td>Network</td><td>Solana ${esc(r.net)}</td></tr>
+ <tr><td>Total supply</td><td>${Number(r.sup).toLocaleString()} (${r.dec} decimals)</td></tr>${r.al.map(a=>`<tr><td>${esc(a.l)} ${a.p}%</td><td>${esc(a.w)}</td></tr>`).join('')}
+ <tr><td>Creator wallet</td><td>${esc(r.creator)}</td></tr><tr><td>Mint authority</td><td>${r.ma==='revoked'?'Revoked':'Active'}</td></tr><tr><td>Freeze authority</td><td>${r.fa==='revoked'?'None':'Active'}</td></tr>
+ <tr><td>Created</td><td>${new Date(r.t).toUTCString()}</td></tr></table></div><div class="card"><h2>Live check against the blockchain</h2><div id="ver" class="mu">Checking…</div></div>
+ <p class="mu">Risk disclosure: This token is highly speculative. Token prices can change rapidly and buyers can lose some or all of their money. Nothing on this page is a promise of profit or investment return.</p>`;verify(r,$('ver'))}
+try{if(location.hash.startsWith('#t=')){pub(JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(3))))))}else shell()}catch(e){shell()}
+</script></body></html>
